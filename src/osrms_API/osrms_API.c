@@ -4,14 +4,7 @@
 #include <stdbool.h>
 #include "osrms_API.h"
 
-#define PCB_TABLE_START 0
-#define PAGE_TABLE_BITMAP 8192
-#define SECONDARY_PAGE_TABLE_START 8320
-#define FRAME_BITMAP_START 139392
-#define FRAME_TABLE_START 147584
-#define PCB_ENTRY_SIZE 256
-
-FILE *memory_file = NULL;
+FILE* memory_file = NULL;
 char* mounted_memory_path = NULL;
 
 // Funciones generales
@@ -23,9 +16,9 @@ void os_mount(char* memory_path) {
 void os_ls_processes() {
     fseek(memory_file, PCB_TABLE_START, SEEK_SET);
     PCB pcbs[32];
-    fread(&pcbs, sizeof(struct PCB), 32, memory_file);
+    fread(&pcbs, sizeof(struct PCB), PCB_ENTRIES, memory_file);
 
-    for (int i = 0; i < 32; i ++) {
+    for (int i = 0; i < PCB_ENTRIES; i ++) {
         PCB* pcb = &pcbs[i];
         if (pcb->state == 0x01) {
             printf("Proceso ID: %d, Nombre: %.11s, Estado: %d\n", pcb->pid, pcb->name, pcb->state);
@@ -34,12 +27,11 @@ void os_ls_processes() {
 };
 
 int os_exists(int process_id, char* file_name){
-    fseek(memory_file, 0, SEEK_SET); //necesito volver al inicio del archivo de mem
-
+    fseek(memory_file, PCB_TABLE_START, SEEK_SET); //necesito volver al inicio del archivo de mem
     PCB pcb;
 
     //Tabla de PCBs de 32 entradas
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < PCB_ENTRIES; i++) {
         fread(&pcb, sizeof(struct PCB), 1, memory_file);
 
         if (pcb.pid == process_id){ //el PCB tiene el id del proceso?
@@ -63,20 +55,21 @@ int os_exists(int process_id, char* file_name){
 };
 
 void os_ls_files(int process_id) {
-    fseek(memory_file, 0, SEEK_SET);
+    fseek(memory_file, PCB_TABLE_START, SEEK_SET);
     PCB pcb;
 
-    for (int i = 0; i <  32; i++) {
+    for (int i = 0; i < PCB_ENTRIES; i++) {
 
         fread(&pcb, sizeof(struct PCB), 1, memory_file);
 
         if (pcb.pid == process_id) {
             printf("\nArchivos\n");
             for (int a = 0; a < 5; a++) {
-                osrmsFile* file_entry = (osrmsFile*) &pcb.fileTable[a * 23];
+                osrmsFile* file_entry = (osrmsFile*) &pcb.fileTable[a * 23 - 1];
                 printf("Nombre: %.14s, Tamaño: %d Bytes\n",
                 file_entry->fileName, file_entry->fileSize);
-            }  
+            }
+            return;
         }
     }
 }
@@ -101,7 +94,7 @@ void os_frame_bitmap() {
             // printf("Bit %d deocupado\n", i);
         }
     }
-    printf("Bitmap Frame: Ocupado: %d, Libres: %d\n", occupied_frames, free_frames);
+    printf("\nBitmap Frame: Ocupado: %d, Libres: %d\n", occupied_frames, free_frames);
 };
 
 void os_tp_bitmap() {
@@ -121,5 +114,108 @@ void os_tp_bitmap() {
             }
         }
     }
-    printf("Bitmap de Tablas de Páginas: Ocupadas: %d, Libres: %d\n", occupied_tables, free_tables);
+    printf("\nBitmap de Tablas de Páginas: Ocupadas: %d, Libres: %d\n", occupied_tables, free_tables);
+}
+
+
+// Funciones para procesos
+void os_start_process(int process_id, char* process_name) {
+    fseek(memory_file, PCB_TABLE_START, SEEK_SET);
+    PCB pcb;
+
+    for (int i = 0; i < PCB_ENTRIES; i++) {
+        fread(&pcb, sizeof(PCB), 1, memory_file);
+
+        if (pcb.state == 0x00) {
+            pcb.state = 0x01;
+            pcb.pid = process_id;
+            strncpy(pcb.name, process_name, 11);
+
+            for (int j = strlen(process_name); j < 11; j++) {
+                pcb.name[j] = '\0';
+            }
+
+            memset(pcb.fileTable, 0, sizeof(pcb.fileTable));
+            memset(pcb.firstOrderTable, 0, sizeof(pcb.firstOrderTable));
+
+            fseek(memory_file, PCB_TABLE_START + i * PCB_ENTRY_SIZE, SEEK_SET);
+
+            fwrite(&pcb, sizeof(PCB), 1, memory_file);
+
+            printf("\nProceso %d (%s) iniciado exitosamente.\n", process_id, process_name);
+            return;
+        }
+    }
+}
+
+void os_finish_process(int process_id) {
+    fseek(memory_file, PCB_TABLE_START, SEEK_SET);
+    PCB pcb;
+
+    for (int i = 0; i < PCB_ENTRIES; i++) {
+        fread(&pcb, sizeof(PCB), 1, memory_file);
+
+        if (pcb.state == 0x01 && pcb.pid == process_id) {
+            pcb.state = 0x00;
+            pcb.pid = 0;
+
+            memset(pcb.name, 0, sizeof(pcb.name));
+            memset(pcb.fileTable, 0, sizeof(pcb.fileTable));
+            memset(pcb.firstOrderTable, 0, sizeof(pcb.firstOrderTable));
+
+            fseek(memory_file, PCB_TABLE_START + i * PCB_ENTRY_SIZE, SEEK_SET);
+
+            fwrite(&pcb, sizeof(PCB), 1, memory_file);
+
+            printf("\nProceso %d elimindao exitosamente.\n", process_id);
+            return;
+        }
+    }
+}
+
+// Funciones para procesos
+osrmsFile* os_open(int process_id, char* file_name, char mode) {
+    osrmsFile* file_ptr = (osrmsFile*) calloc(1, sizeof(osrmsFile));
+    
+    if (mode == 'r') {
+        PCB pcb;
+
+        for (int i = 0; i < PCB_ENTRIES; i++) {
+            fseek(memory_file, i * PCB_ENTRY_SIZE, SEEK_SET);
+            fread(&pcb, sizeof(struct PCB), 1, memory_file);
+
+            if (pcb.pid == process_id && pcb.state == 0x01) {
+                for (int a = 0; a < 5; a++) {
+                    osrmsFile* file_entry = (osrmsFile*) &pcb.fileTable[a * 23 - 1];
+                    if (strcmp(file_entry->fileName, file_name) == 0) {
+                        file_ptr->validationByte = 0x01;
+                        strncpy(file_ptr->fileName, file_entry->fileName, 14);
+                        file_ptr->fileSize = file_entry->fileSize;
+                        file_ptr->virtualAddress = file_entry->virtualAddress;
+                        return file_ptr;
+                    }
+                }  
+            }
+        }
+        return file_ptr;
+    } else if (mode == 'w') {
+        if (!os_exists(process_id, file_name)) {
+            strncpy(file_ptr->fileName, file_name, 14);
+            file_ptr->validationByte = 0x01;
+            file_ptr->fileSize = 0;
+            file_ptr->virtualAddress = 0;
+            return file_ptr;
+        }
+    }
+
+    free(file_ptr);
+    return NULL;
+}
+
+int os_read_file(osrmsFile* file_desc, char* dest) {
+    return 0;
+}
+
+int os_write_file(osrmsFile* file_desc, char* src) {
+    return 0;
 }

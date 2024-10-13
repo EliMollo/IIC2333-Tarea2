@@ -16,16 +16,14 @@ int main(int argc, char const *argv[])
     // os_ls_processes
     os_ls_processes();
 
-    // os_exists();
+    // os_exists
     int process_id = 91;
     char* file_name = "knowledg.jpg";
 
-    int result = os_exists(process_id, file_name);
-
-    if (result) {
-        printf("Existe! Archivo: %s | ID: %d. \n", file_name, process_id);
+    if (os_exists(process_id, file_name)) {
+        printf("\nExiste! Archivo: %s | ID: %d.\n", file_name, process_id);
     } else {
-        printf("No existe el archivo.\n");
+        printf("\nNo existe el archivo.\n");
     }
 
     // os_ls_files
@@ -36,6 +34,13 @@ int main(int argc, char const *argv[])
 
     // os_tp_bitmap
     os_tp_bitmap();
+
+    // os_start_process
+    // os_start_process(115, "hola");
+    // os_start_process(45, "chao");
+
+    // os_finish_process
+    // os_finish_process(45);
 
     return 0;
 

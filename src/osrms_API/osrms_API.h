@@ -1,19 +1,31 @@
 #pragma once
 #include "../osrms_File/Osrms_File.h"
 
+#define PCB_TABLE_START 0
+#define PCB_ENTRY_SIZE 256
+#define PCB_ENTRIES 32
+
+#define PAGE_TABLE_BITMAP 8192
+
+#define SECONDARY_PAGE_TABLE_START 8320
+
+#define FRAME_BITMAP_START 139392
+#define FRAME_TABLE_START 147584
+
+
 typedef struct osrmsFile {
-    uint8_t validationByte;
-    uint8_t fileName[14];
-    uint32_t fileSize;
-    uint32_t virtualAddress;
+    unsigned char validationByte;
+    char fileName[14];
+    unsigned int fileSize;
+    unsigned int virtualAddress;
 } osrmsFile;
 
 typedef struct PCB {
-    uint8_t state;
-    uint8_t pid;
-    uint8_t name[11];
-    uint8_t fileTable[115];
-    uint8_t firstOrderTable[128];
+    unsigned char state;
+    unsigned char pid;
+    char name[11];
+    char fileTable[115];
+    char firstOrderTable[128];
 } PCB;
 
 // Funciones generales
