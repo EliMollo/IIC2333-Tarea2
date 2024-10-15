@@ -1,5 +1,9 @@
 #include "../osrms_API/osrms_API.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+extern FILE* memory_file;
 
 int main(int argc, char const *argv[])
 {
@@ -27,7 +31,7 @@ int main(int argc, char const *argv[])
     }
 
     // os_ls_files
-    os_ls_files(105);
+    os_ls_files(139);
 
     // os_frame_bitmap
     os_frame_bitmap();
@@ -41,6 +45,29 @@ int main(int argc, char const *argv[])
 
     // os_finish_process
     // os_finish_process(45);
+
+    // os_write_file
+    osrmsFile* file_to_write = os_open(139, "newfile.txt", 'w');
+    if (file_to_write != NULL) {
+        char* data = "archivo de prueba";
+        int bytes_written = os_write_file(file_to_write, data);
+        printf("\nBytes escritos: %d\n", bytes_written);
+
+        os_close(file_to_write);
+    } else {
+        printf("Error abriendo el archivo\n");
+    }
+
+    // os_open
+    osrmsFile* file = os_open(139, "aaaaa.gif", 'r');
+
+    // os_read_file
+    char* dest = (char*) calloc(1, 1024);
+    os_read_file(file, dest);
+
+    free(memory_file);
+
+    
 
     return 0;
 

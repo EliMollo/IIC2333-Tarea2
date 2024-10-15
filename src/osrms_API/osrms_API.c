@@ -16,7 +16,7 @@ void os_mount(char* memory_path) {
 void os_ls_processes() {
     fseek(memory_file, PCB_TABLE_START, SEEK_SET);
     PCB pcbs[32];
-    fread(&pcbs, sizeof(struct PCB), PCB_ENTRIES, memory_file);
+    fread(&pcbs, sizeof(PCB), PCB_ENTRIES, memory_file);
 
     for (int i = 0; i < PCB_ENTRIES; i ++) {
         PCB* pcb = &pcbs[i];
@@ -32,7 +32,7 @@ int os_exists(int process_id, char* file_name){
 
     //Tabla de PCBs de 32 entradas
     for (int i = 0; i < PCB_ENTRIES; i++) {
-        fread(&pcb, sizeof(struct PCB), 1, memory_file);
+        fread(&pcb, sizeof(PCB), 1, memory_file);
 
         if (pcb.pid == process_id){ //el PCB tiene el id del proceso?
 
@@ -60,12 +60,12 @@ void os_ls_files(int process_id) {
 
     for (int i = 0; i < PCB_ENTRIES; i++) {
 
-        fread(&pcb, sizeof(struct PCB), 1, memory_file);
+        fread(&pcb, sizeof(PCB), 1, memory_file);
 
         if (pcb.pid == process_id) {
             printf("\nArchivos\n");
             for (int a = 0; a < 5; a++) {
-                osrmsFile* file_entry = (osrmsFile*) &pcb.fileTable[a * 23 - 1];
+                FileEntry* file_entry = (FileEntry*) &pcb.fileTable[a * sizeof(FileEntry)];
                 printf("Nombre: %.14s, Tamaño: %d Bytes\n",
                 file_entry->fileName, file_entry->fileSize);
             }
@@ -114,7 +114,7 @@ void os_tp_bitmap() {
             }
         }
     }
-    printf("\nBitmap de Tablas de Páginas: Ocupadas: %d, Libres: %d\n", occupied_tables, free_tables);
+    printf("\nBitmap de Tablas de Paginas: Ocupadas: %d, Libres: %d\n", occupied_tables, free_tables);
 }
 
 
@@ -182,22 +182,23 @@ osrmsFile* os_open(int process_id, char* file_name, char mode) {
 
         for (int i = 0; i < PCB_ENTRIES; i++) {
             fseek(memory_file, i * PCB_ENTRY_SIZE, SEEK_SET);
-            fread(&pcb, sizeof(struct PCB), 1, memory_file);
+            fread(&pcb, sizeof(PCB), 1, memory_file);
 
             if (pcb.pid == process_id && pcb.state == 0x01) {
                 for (int a = 0; a < 5; a++) {
-                    osrmsFile* file_entry = (osrmsFile*) &pcb.fileTable[a * 23 - 1];
+                    FileEntry* file_entry = (FileEntry*) &pcb.fileTable[a * sizeof(FileEntry)];
                     if (strcmp(file_entry->fileName, file_name) == 0) {
-                        file_ptr->validationByte = 0x01;
+                        file_ptr->validationByte = file_entry->validationByte;
                         strncpy(file_ptr->fileName, file_entry->fileName, 14);
                         file_ptr->fileSize = file_entry->fileSize;
                         file_ptr->virtualAddress = file_entry->virtualAddress;
+                        file_ptr->mode = mode;
+                        memcpy(file_ptr->firstOrderTable, pcb.firstOrderTable, sizeof(pcb.firstOrderTable));
                         return file_ptr;
                     }
                 }  
             }
         }
-        return file_ptr;
     } else if (mode == 'w') {
         if (!os_exists(process_id, file_name)) {
             strncpy(file_ptr->fileName, file_name, 14);
@@ -213,9 +214,97 @@ osrmsFile* os_open(int process_id, char* file_name, char mode) {
 }
 
 int os_read_file(osrmsFile* file_desc, char* dest) {
-    return 0;
+    if (file_desc == NULL || file_desc->validationByte != 0x01){
+        printf("Error, archivo invalido. \n");
+        return -1;
+    }
+
+    unsigned int VPN =  (file_desc->virtualAddress & VPNMASK) >> 15;
+    unsigned int OFFSET = file_desc->virtualAddress & OFFSETMASK;
+
+    int remaining_size = file_desc->fileSize;
+    unsigned int bytes_read = 0;
+
+    while (remaining_size > 0) {
+        unsigned int first_order_index = (VPN >> 6) & 0x3F;
+        unsigned short SPTN;
+        memcpy(&SPTN, &file_desc->firstOrderTable[first_order_index], sizeof(unsigned short));
+        
+        unsigned int second_order_index = VPN & 0x3F;
+        unsigned int second_order_address = SECONDARY_PAGE_TABLE_START + 128 * SPTN + 2 * second_order_index;
+        unsigned short PFN;
+   
+        fseek(memory_file, second_order_address, SEEK_SET);
+        fread(&PFN, sizeof(unsigned short), 1, memory_file);
+
+        unsigned int physical_address = (PFN << 15) | OFFSET;
+        
+        unsigned int bytes_to_read = 0;
+        if (OFFSET != 0) {
+            bytes_to_read = FRAME_SIZE - OFFSET;
+            if (bytes_to_read > remaining_size) {
+                bytes_to_read = remaining_size;
+            }
+        } else if (remaining_size >= FRAME_SIZE) {
+            bytes_to_read = FRAME_SIZE;
+        } else {
+            bytes_to_read = remaining_size;
+        }
+
+        fseek(memory_file, physical_address, SEEK_SET);
+        fread(dest + bytes_read, 1, bytes_to_read, memory_file);
+
+        bytes_read += bytes_to_read;
+        remaining_size -= bytes_to_read;
+        OFFSET = 0;
+        VPN++;
+    }
+    return bytes_read;
 }
 
+
 int os_write_file(osrmsFile* file_desc, char* src) {
-    return 0;
+    if (file_desc == NULL || file_desc->validationByte != 0x01){
+        printf("Error, archivo invalido. \n");
+        return -1;
+    }
+    
+    unsigned int VPN = (file_desc->virtualAddress & VPNMASK) >> 15;
+    unsigned int offset = file_desc->virtualAddress & OFFSETMASK;
+    unsigned int remaining_size = file_desc->fileSize;
+    unsigned int bytes_written = 0; //datos escritos en mem
+    const unsigned int frame_size = 32*1024;
+    
+    while (remaining_size > 0) {
+        fseek(memory_file, SECONDARY_PAGE_TABLE_START + VPN*2, SEEK_SET);
+        unsigned short frame_number;
+        fread(&frame_number, sizeof(unsigned short), 1, memory_file);
+
+        unsigned int frame_address = FRAME_TABLE_START + (frame_number * frame_size);
+        fseek(memory_file, frame_address + offset, SEEK_SET);
+
+        unsigned int bytes_to_write = (remaining_size < (frame_size - offset)) ? remaining_size : (frame_size - offset);
+
+        fwrite(src + bytes_written, 1, bytes_to_write, memory_file);
+
+        bytes_written += bytes_to_write;
+        remaining_size -= bytes_to_write;
+        VPN++; //pasar a la siguiente pagina
+        offset = 0; //resetear offset
+
+        //no quedan frames o no hay espacio
+        if (frame_number == 0xFFFF) {
+            printf("Error: no se pudo traducir VPN %d\n", VPN);
+            return bytes_written;
+        }
+    }
+    return bytes_written;
+}
+
+void os_close(osrmsFile* file_desc) {
+    if (file_desc != NULL) {
+        free(file_desc);
+        file_desc = NULL;
+        printf("Archivo cerrado.\n");
+    }
 }

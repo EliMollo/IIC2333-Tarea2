@@ -12,13 +12,17 @@
 #define FRAME_BITMAP_START 139392
 #define FRAME_TABLE_START 147584
 
+#define VPNMASK 0xFFF0000
+#define OFFSETMASK 0x7FF8000
+#define FRAME_SIZE 32768
 
-typedef struct osrmsFile {
+#pragma pack(push, 1)
+typedef struct FileEntry {
     unsigned char validationByte;
     char fileName[14];
     unsigned int fileSize;
     unsigned int virtualAddress;
-} osrmsFile;
+} FileEntry;
 
 typedef struct PCB {
     unsigned char state;
@@ -27,6 +31,7 @@ typedef struct PCB {
     char fileTable[115];
     char firstOrderTable[128];
 } PCB;
+#pragma pack(pop)
 
 // Funciones generales
 void os_mount(char* memory_path);
